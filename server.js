@@ -20,9 +20,11 @@ const pool = new Pool({
 app.use(cors()); // Permite que seu app no Netlify acesse este servidor
 app.use(express.json()); // Permite que o servidor entenda JSON
 
-// Rota de teste
+// Rota de teste CORRIGIDA
 app.get('/', (req, res) => {
-  res.send('API do Proto Milk está funcionando!');
+  // ANTES: res.send('API do Proto Milk está funcionando!');
+  // AGORA: Enviando uma resposta JSON válida
+  res.json({ message: 'API do Proto Milk está funcionando!' });
 });
 
 // --- ROTAS PARA PRODUTORES ---
@@ -145,14 +147,35 @@ app.post('/medications', async (req, res) => {
     }
 });
 
-// Adicione aqui as rotas PUT e DELETE para medicamentos...
+app.put('/medications/:id', async (req, res) => {
+    const { id } = req.params;
+    const { name, dosage_per_kg, milk_withdrawal_days, price, purchase_date, expiration_date } = req.body;
+    try {
+        const result = await pool.query(
+            'UPDATE medications SET name = $1, dosage_per_kg = $2, milk_withdrawal_days = $3, price = $4, purchase_date = $5, expiration_date = $6 WHERE id = $7 RETURNING *',
+            [name, dosage_per_kg, milk_withdrawal_days, price, purchase_date, expiration_date, id]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/medications/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        await pool.query('DELETE FROM medications WHERE id = $1', [id]);
+        res.status(204).send();
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 
 // --- ROTAS PARA TRATAMENTOS ---
 app.get('/treatments', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM treatments');
-        // Lógica para buscar também o nome do animal e produtor pode ser adicionada aqui com JOINs
+        const result = await pool.query('SELECT * FROM treatments ORDER BY start_date DESC');
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
