@@ -131,7 +131,7 @@
                         if (body) options.body = JSON.stringify(body);
                         const response = await fetch(`${API_URL}${endpoint}`, options);
                         if (!response.ok) throw new Error(`Erro na API: ${response.statusText}`);
-                        if (response.status === 204) return;
+                        if (response.status === 204 || response.headers.get("content-length") === "0") return null;
                         return response.json();
                     } catch (error) {
                         console.error('Falha na comunicação com a API:', error);
@@ -156,9 +156,8 @@
                 deleteTreatment: (id) => API.request(`/treatments/${id}`, 'DELETE'),
             };
 
-            // --- VARIÁVEIS DE ESTADO E ELEMENTOS DO DOM ---
+            // --- DOM Elements ---
             let selectedProducerId = null;
-
             const tabs = { herds: document.getElementById('tab-herds'), meds: document.getElementById('tab-meds'), treatments: document.getElementById('tab-treatments') };
             const panels = { herds: document.getElementById('panel-herds'), meds: document.getElementById('panel-meds'), treatments: document.getElementById('panel-treatments') };
             const producerForm = document.getElementById('add-producer-form');
@@ -185,7 +184,7 @@
             const modalContent = document.getElementById('modal-content');
             const modalTitle = document.getElementById('modal-title');
 
-            // --- FUNÇÕES DE RENDERIZAÇÃO ---
+            // --- Render Functions ---
             const renderProducers = async () => {
                 const producers = await API.getProducers();
                 if (!producers) return;
@@ -235,8 +234,6 @@
             const renderTreatments = async () => {
                 const treatments = await API.getTreatments();
                 if (!treatments) return;
-                // Para otimizar, o ideal seria o backend já trazer os nomes com JOINs.
-                // Mas para manter simples, faremos as buscas aqui.
                 const allAnimals = (await Promise.all(producersCache.map(p => API.getAnimals(p.id)))).flat();
                 
                 const activeTreatments = [];
@@ -247,9 +244,7 @@
                     const startDate = new Date(t.start_date);
                     const withdrawalEndDate = new Date(startDate);
                     withdrawalEndDate.setDate(startDate.getDate() + t.milk_withdrawal_days);
-                    if (withdrawalEndDate >= today) {
-                        activeTreatments.push({ ...t, withdrawalEndDate });
-                    }
+                    if (withdrawalEndDate >= today) activeTreatments.push({ ...t, withdrawalEndDate });
                 });
 
                 noTreatmentsMessage.classList.toggle('hidden', activeTreatments.length > 0);
@@ -263,7 +258,7 @@
                 });
             };
 
-            // --- LÓGICA DE EVENTOS ---
+            // --- Event Listeners ---
             function switchTab(activeTab) {
                 for (const key in tabs) {
                     const is_active = key === activeTab;
@@ -279,7 +274,6 @@
                 await renderTreatments();
             });
 
-            // Produtor Events
             producerForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const id = document.getElementById('producer-id-edit').value;
@@ -336,7 +330,6 @@
             }
             producerCancelBtn.addEventListener('click', resetProducerForm);
 
-            // Animal Events
             addAnimalForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 if (!selectedProducerId) return;
@@ -378,10 +371,6 @@
                 }
             });
 
-            // Medicamento Events
-            // ... (A lógica de edição e deleção de medicamentos seguiria o mesmo padrão dos produtores)
-
-            // Tratamento Events
             treatmentListContainer.addEventListener('click', async (e) => {
                 const finishBtn = e.target.closest('.finish-treatment-btn');
                 if (finishBtn) {
@@ -392,11 +381,57 @@
                 }
             });
 
-            // Modal Logic
+            // --- Modal Logic ---
             function showAnimalDetails(animal, isEditMode = false) {
-                // A lógica do modal é a mesma da versão offline,
-                // com a diferença que a chamada para salvar (DB.updateAnimal ou DB.addTreatment)
-                // deve ser trocada por `await API.updateAnimal` ou `await API.addTreatment`.
+                modalTitle.textContent = isEditMode ? "Editar Animal" : "Detalhes do Animal";
+                if (isEditMode) {
+                    modalContent.innerHTML = `<form id="edit-animal-form" class="space-y-4"><div class="grid grid-cols-1 md:grid-cols-2 gap-4"><div><label class="block text-sm">Nome/ID</label><input type="text" id="edit-animal-name" value="${animal.name_or_id}" class="w-full p-2 border rounded"></div><div><label class="block text-sm">Raça</label><input type="text" id="edit-animal-breed" value="${animal.breed}" class="w-full p-2 border rounded"></div><div><label class="block text-sm">Sexo</label><select id="edit-animal-sex" class="w-full p-2 border rounded"><option value="Macho" ${animal.sex === 'Macho' ? 'selected' : ''}>Macho</option><option value="Fêmea" ${animal.sex === 'Fêmea' ? 'selected' : ''}>Fêmea</option></select></div><div><label class="block text-sm">Mãe</label><input type="text" id="edit-animal-mother" value="${animal.mother_id || ''}" class="w-full p-2 border rounded"></div><div><label class="block text-sm">Pai</label><input type="text" id="edit-animal-father" value="${animal.father_id || ''}" class="w-full p-2 border rounded"></div><div class="flex items-center space-x-4"><label class="flex items-center"><input type="checkbox" id="edit-animal-lactation" class="h-4 w-4" ${animal.in_lactation ? 'checked' : ''}><span class="ml-2">Em Lactação</span></label><label class="flex items-center"><input type="checkbox" id="edit-animal-covered" class="h-4 w-4" ${animal.is_covered ? 'checked' : ''}><span class="ml-2">Com Cobertura</span></label></div></div><div class="flex justify-end pt-4 border-t"><button type="submit" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700">Salvar Alterações</button></div></form>`;
+                    document.getElementById('edit-animal-form').addEventListener('submit', async (e) => {
+                        e.preventDefault();
+                        const updatedAnimal = { name_or_id: document.getElementById('edit-animal-name').value, breed: document.getElementById('edit-animal-breed').value, sex: document.getElementById('edit-animal-sex').value, mother_id: document.getElementById('edit-animal-mother').value, father_id: document.getElementById('edit-animal-father').value, in_lactation: document.getElementById('edit-animal-lactation').checked, is_covered: document.getElementById('edit-animal-covered').checked };
+                        await API.updateAnimal(animal.id, updatedAnimal);
+                        animalDetailsModal.classList.add('hidden');
+                        await renderAnimals(selectedProducerId);
+                    });
+                } else {
+                    const medOptions = medicationsCache.map(med => `<option value="${med.id}">${med.name}</option>`).join('');
+                    modalContent.innerHTML = `<div class="grid grid-cols-2 gap-4 text-sm mb-6"><div><strong>ID:</strong> ${animal.name_or_id}</div><div><strong>Raça:</strong> ${animal.breed}</div><div><strong>Sexo:</strong> ${animal.sex}</div><div><strong>Status:</strong> ${animal.in_lactation ? 'Lactação' : ''} ${animal.is_covered ? 'Cobertura' : ''}</div><div><strong>Mãe:</strong> ${animal.mother_id || 'N/A'}</div><div><strong>Pai:</strong> ${animal.father_id || 'N/A'}</div></div><div class="border-t pt-4"><h4 class="text-xl font-semibold mb-4">Tratamentos</h4><div class="bg-gray-50 p-4 rounded-lg"><h5 class="font-semibold mb-2">Iniciar Novo Tratamento</h5><form id="add-treatment-form" class="space-y-4"><div class="grid grid-cols-1 md:grid-cols-2 gap-4"><div><label for="treatment-reason" class="block text-xs font-medium">Motivo do Tratamento</label><input type="text" id="treatment-reason" placeholder="Ex: Mastite" class="w-full mt-1 p-2 border rounded-md" required></div><div><label for="treatment-med" class="block text-xs font-medium">Medicamento</label><select id="treatment-med" class="w-full mt-1 p-2 border rounded-md" required><option value="">Selecione...</option>${medOptions}</select></div></div><div><label for="treatment-weight" class="block text-xs font-medium">Peso (kg)</label><input type="number" id="treatment-weight" placeholder="Ex: 450" class="w-full mt-1 p-2 border rounded-md" required></div><div id="calculated-dosage-info"></div><div id="treatment-info"></div><div><button type="submit" class="w-full bg-green-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700">Registrar Tratamento</button></div></form></div></div>`;
+                    const treatmentForm = document.getElementById('add-treatment-form');
+                    const treatmentMedSelect = document.getElementById('treatment-med');
+                    const treatmentWeightInput = document.getElementById('treatment-weight');
+                    const treatmentInfo = document.getElementById('treatment-info');
+                    const calculatedDosageInfo = document.getElementById('calculated-dosage-info');
+                    const updateDosageCalculation = () => {
+                        const weight = parseFloat(treatmentWeightInput.value);
+                        const medId = treatmentMedSelect.value;
+                        const selectedMed = medicationsCache.find(m => m.id == medId);
+                        if (weight > 0 && selectedMed) {
+                            const dosage = weight * selectedMed.dosage_per_kg;
+                            calculatedDosageInfo.innerHTML = `<div class="mt-2 p-3 bg-blue-100 border-l-4 border-blue-500 text-blue-700"><p>Dose calculada: <strong>${dosage.toFixed(2)} ml</strong></p></div>`;
+                        } else calculatedDosageInfo.innerHTML = '';
+                    };
+                    const updateWithdrawalWarning = () => {
+                        const selectedMed = medicationsCache.find(m => m.id == treatmentMedSelect.value);
+                        if (animal.in_lactation && selectedMed && selectedMed.milk_withdrawal_days > 0) {
+                            treatmentInfo.innerHTML = `<div class="mt-2 p-3 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700"><p class="font-bold">Atenção: Animal em Lactação!</p><p>O leite deverá ser descartado por <strong>${selectedMed.milk_withdrawal_days} dias</strong>.</p></div>`;
+                        } else treatmentInfo.innerHTML = '';
+                    }
+                    treatmentWeightInput.addEventListener('input', updateDosageCalculation);
+                    treatmentMedSelect.addEventListener('change', () => {
+                        updateWithdrawalWarning();
+                        updateDosageCalculation();
+                    });
+                    treatmentForm.addEventListener('submit', async (e) => {
+                        e.preventDefault();
+                        const medId = treatmentMedSelect.value;
+                        const weight = parseFloat(treatmentWeightInput.value);
+                        const selectedMed = medicationsCache.find(m => m.id == medId);
+                        if(!selectedMed || !weight) return;
+                        await API.addTreatment({ animal_id: animal.id, reason: document.getElementById('treatment-reason').value, medication_name: selectedMed.name, start_date: new Date().toISOString().split('T')[0], milk_withdrawal_days: selectedMed.milk_withdrawal_days });
+                        animalDetailsModal.classList.add('hidden');
+                    });
+                }
+                animalDetailsModal.classList.remove('hidden');
             }
             closeModalBtn.addEventListener('click', () => animalDetailsModal.classList.add('hidden'));
 
@@ -406,12 +441,9 @@
                 if (testConnection !== null) {
                      statusIndicator.innerHTML = `<p class="text-green-600 bg-green-100 p-2 rounded-lg"><strong>Modo Online:</strong> Conectado com sucesso!</p>`;
                 }
-                
                 await renderProducers();
                 await renderMedications();
-                // await renderTreatments(); // Chamado ao clicar na aba
             };
-
             initializeApp();
         });
     </script>
